@@ -1,0 +1,172 @@
+silencesfile = 'silences.yml'
+
+OFFSET = 0.0
+MIN_PAUSE = 2.0
+MAX_PAUSE = 2.1
+VOLUME=0.5
+#SOUND_DEVICE='USB PnP Sound Device'
+SOUND_DEVICE='Bose QC35 II'
+
+import pygame
+from pygame import mixer, time, font
+from pygame.locals import *
+import yaml
+from datetime import datetime, timedelta
+import sys
+import hid
+
+silence_data = yaml.safe_load(open(silencesfile).read())
+
+soundfile = silence_data[0]['name']
+silences = silence_data[0]['silences']
+
+mixer.pre_init(devicename=SOUND_DEVICE)
+pygame.init()
+
+
+#my_font = pygame.font.SysFont('Comic Sans MS', 24)
+my_font = pygame.font.SysFont('Courier New', 24)
+
+
+width, height = 800, 600
+screen = pygame.display.set_mode((width, height))
+
+fps = 300
+fpsClock = time.Clock()
+
+start = datetime.now()
+tick_offset = 0
+start_tick = 0
+
+
+#bus_type : 1
+#interface_number : 3
+#manufacturer_string : C-Media Electronics Inc.
+#path : b'DevSrvsID:4295991877'
+#product_id : 316
+#product_string : USB PnP Sound Device
+#release_number : 256
+#serial_number :
+#usage : 1
+#usage_page : 12
+#vendor_id : 3468
+
+#usb_dev: tuple = (0x0D8C, 0x013A)
+usb_dev: tuple = (3468, 316)
+
+READ_SIZE = 5
+
+PTT_START = b'\x00\x00\x04\x04\x00'
+PTT_STOP = b'\x00\x00\x00\x00\x00'
+
+COR_START = bytearray(b'\x02\x00\x00\x00')
+COR_STOP = bytearray(b'\x00\x00\x00\x00')
+
+h = None
+try:
+  h = hid.Device(usb_dev[0], usb_dev[1])
+  print(f'Device manufacturer: {h.manufacturer}')
+  print(f'Product: {h.product}')
+  print(f'Serial Number: {h.serial}')
+except:
+  print('No PTT device!')
+
+is_ptt_on = False
+
+def ptt_start():
+  global is_ptt_on
+  is_ptt_on = True
+  if h:
+    h.write(PTT_START)
+
+def ptt_stop():
+  global is_ptt_on
+  is_ptt_on = False
+  if h:
+    h.write(PTT_STOP)
+
+for file_block in silence_data:
+
+  soundfile = file_block['name']
+  silences = file_block['silences']
+  sidx = 0
+  
+  tick_offset = time.get_ticks()
+  sound_delta = 0.0
+  sound = mixer.Sound(soundfile)
+  started = False
+ 
+  paused = False
+ 
+  while True:
+    screen.fill((0, 0, 0))
+  
+    ticks = time.get_ticks() - tick_offset
+  
+    if ticks > 2000 and not started:
+      ptt_start()
+      sound.set_volume(VOLUME)
+      sound.play()
+      start = datetime.now()
+      start_tick = time.get_ticks() - tick_offset
+      started = True
+
+    if started and not mixer.get_busy():
+      break
+  
+    sound_ticks = ticks - start_tick
+  
+    dt = datetime.now() - start
+  
+    text = []
+  
+    text.append(str(dt))
+    text.append(f"global ticks: {ticks}")
+    text.append(f"sound  ticks: {sound_ticks}")
+    text.append(f"PTT on: {is_ptt_on} Soundfile: {soundfile}")
+  
+  
+    if sidx < len(silences):
+  
+      curr_start = (silences[sidx]['start'] + OFFSET + 0.5 * silences[sidx]['duration']) * 1000 + sound_delta
+      #curr_duration_s = max(MIN_PAUSE, min(silences[sidx]['duration'], MAX_PAUSE))
+      #curr_duration = curr_duration_s * 1000
+      curr_duration = MIN_PAUSE * 1000
+  
+      dt_start = timedelta(seconds=curr_start / 1000)
+      dt_end = timedelta(seconds=(curr_start+curr_duration)/1000)
+  
+      if sound_ticks > curr_start:
+        if sound_ticks < curr_start + curr_duration:
+          #sound.set_volume(0.0)
+          mixer.pause()
+          if not paused:
+            time.delay(250)
+            paused = True
+          ptt_stop()
+          text.append(f"Pause running : {sidx:02} from {dt_start} to {dt_end} ")
+        else:
+          #sound.set_volume(VOLUME)
+          ptt_start()
+          time.delay(100)
+          paused = False
+          mixer.unpause()
+          sound_delta = sound_delta + 250 + 100 + curr_duration
+          sidx = sidx + 1
+          text.append(f"Pause upcoming: {sidx:02} from {dt_start} to {dt_end} ")
+      else:
+        text.append(f"Pause upcoming: {sidx:02} from {dt_start} to {dt_end} ")
+  
+    
+    for idx, line in enumerate(text):
+      text_surface = my_font.render(line, False, (220, 0, 0))
+      screen.blit(text_surface, (0,idx * (my_font.size(line)[1] + 4)))
+  
+    for event in pygame.event.get():
+      if event.type == QUIT:
+        ptt_stop()
+        pygame.quit()
+        sys.exit()
+  
+    pygame.display.flip()
+    fpsClock.tick_busy_loop(fps)
