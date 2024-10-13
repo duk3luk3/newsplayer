@@ -1,11 +1,10 @@
-silencesfile = 'silences.yml'
 
 OFFSET = 0.0
 MIN_PAUSE = 2.0
 MAX_PAUSE = 2.1
 VOLUME=0.5
-#SOUND_DEVICE='USB PnP Sound Device'
-SOUND_DEVICE='Bose QC35 II'
+SOUND_DEVICE='USB PnP Sound Device'
+#SOUND_DEVICE='Bose QC35 II'
 
 import pygame
 from pygame import mixer, time, font
@@ -15,6 +14,8 @@ from datetime import datetime, timedelta
 import sys
 import hid
 
+#silencesfile = 'silences.yml'
+silencesfile = sys.argv[1]
 silence_data = yaml.safe_load(open(silencesfile).read())
 
 soundfile = silence_data[0]['name']
@@ -85,6 +86,9 @@ def ptt_stop():
   if h:
     h.write(PTT_STOP)
 
+
+MUSIC_END = pygame.USEREVENT+1
+
 for file_block in silence_data:
 
   soundfile = file_block['name']
@@ -93,10 +97,15 @@ for file_block in silence_data:
   
   tick_offset = time.get_ticks()
   sound_delta = 0.0
-  sound = mixer.Sound(soundfile)
+  #sound = mixer.Sound(soundfile)
+  sound = mixer.music.load(soundfile)
+  mixer.music.set_endevent(MUSIC_END)
+  
   started = False
+  finished = False
  
   paused = False
+  pause_start = 0.0
  
   while True:
     screen.fill((0, 0, 0))
@@ -105,13 +114,20 @@ for file_block in silence_data:
   
     if ticks > 2000 and not started:
       ptt_start()
-      sound.set_volume(VOLUME)
-      sound.play()
+      #sound.set_volume(VOLUME)
+      #sound.play()
+      mixer.music.set_volume(VOLUME)
+      mixer.music.play()
       start = datetime.now()
       start_tick = time.get_ticks() - tick_offset
       started = True
 
-    if started and not mixer.get_busy():
+    #if started and not mixer.get_busy():
+    #if started and sidx >= len(silences) and len(silences) > 0 :
+    #  break
+
+    if finished:
+      ptt_stop()
       break
   
     sound_ticks = ticks - start_tick
@@ -119,38 +135,49 @@ for file_block in silence_data:
     dt = datetime.now() - start
   
     text = []
+
+    pos = mixer.music.get_pos() / 1000.0
   
     text.append(str(dt))
     text.append(f"global ticks: {ticks}")
-    text.append(f"sound  ticks: {sound_ticks}")
+    text.append(f"sound  ticks: {sound_ticks} sound pos {pos}:")
     text.append(f"PTT on: {is_ptt_on} Soundfile: {soundfile}")
   
   
     if sidx < len(silences):
   
-      curr_start = (silences[sidx]['start'] + OFFSET + 0.5 * silences[sidx]['duration']) * 1000 + sound_delta
+      #curr_start = (silences[sidx]['start'] + OFFSET + 0.5 * silences[sidx]['duration']) * 1000 + sound_delta
       #curr_duration_s = max(MIN_PAUSE, min(silences[sidx]['duration'], MAX_PAUSE))
       #curr_duration = curr_duration_s * 1000
+      
+      curr_start = (silences[sidx]['start'] + OFFSET + 0.5 * silences[sidx]['duration']) * 1000
       curr_duration = MIN_PAUSE * 1000
   
       dt_start = timedelta(seconds=curr_start / 1000)
       dt_end = timedelta(seconds=(curr_start+curr_duration)/1000)
   
-      if sound_ticks > curr_start:
-        if sound_ticks < curr_start + curr_duration:
+      #if sound_ticks > curr_start:
+      if (mixer.music.get_pos() > curr_start) or paused:
+        if (ticks < pause_start + curr_duration) or not paused:
           #sound.set_volume(0.0)
-          mixer.pause()
+          #mixer.pause()
           if not paused:
+            mixer.music.pause()
+            mixer.music.rewind()
             time.delay(250)
             paused = True
-          ptt_stop()
+            pause_start = ticks
+            ptt_stop()
           text.append(f"Pause running : {sidx:02} from {dt_start} to {dt_end} ")
         else:
           #sound.set_volume(VOLUME)
           ptt_start()
           time.delay(100)
           paused = False
-          mixer.unpause()
+          #mixer.unpause()
+          #mixer.music.play(start=curr_start / 1000.0)
+          mixer.music.set_pos(curr_start / 1000.0)
+          mixer.music.unpause()
           sound_delta = sound_delta + 250 + 100 + curr_duration
           sidx = sidx + 1
           text.append(f"Pause upcoming: {sidx:02} from {dt_start} to {dt_end} ")
@@ -167,6 +194,9 @@ for file_block in silence_data:
         ptt_stop()
         pygame.quit()
         sys.exit()
+      elif event.type == MUSIC_END:
+        print("finished")
+        finished = True
   
     pygame.display.flip()
     fpsClock.tick_busy_loop(fps)

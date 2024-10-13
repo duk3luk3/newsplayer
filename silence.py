@@ -5,10 +5,10 @@ import sys
 
 mp3filename = sys.argv[1]
 
-#MAX_DIST = 60.0*3 - 5
-#WANT_DIST = 60.0*2
-MAX_DIST = 60.0*1 - 5
-WANT_DIST = 0
+MAX_DIST = 60.0*3 - 5
+WANT_DIST = 60.0*2
+#MAX_DIST = 60.0*1 - 5
+#WANT_DIST = 0
 WANT_DURATIONS = [2.0, 1.5, 1.0, 0.5, 0.3]
 
 
