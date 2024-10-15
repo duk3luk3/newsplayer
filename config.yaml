@@ -1,0 +1,12 @@
+player_config:
+  pause_length: 2.0
+  silence_offset: 0.0
+  volume: 1.0
+  datafile: 'silences.yml'
+#  sound_dev: 'Bose QC35 II'
+  sound_dev: null
+  ptt_dev_vid: 3468
+  ptt_dev_pid: 316
+  ptt_on_delay: 0.1
+  ptt_off_delay: 0.25
+

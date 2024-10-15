@@ -2,9 +2,11 @@
 OFFSET = 0.0
 MIN_PAUSE = 2.0
 MAX_PAUSE = 2.1
-VOLUME=0.5
-SOUND_DEVICE='USB PnP Sound Device'
-#SOUND_DEVICE='Bose QC35 II'
+VOLUME=1.0
+#SOUND_DEVICE='USB PnP Sound Device'
+SOUND_DEVICE='Bose QC35 II'
+PTT_VID = 3568
+PTT_PID = 316
 
 import pygame
 from pygame import mixer, time, font
@@ -14,8 +16,19 @@ from datetime import datetime, timedelta
 import sys
 import hid
 
+configfile = sys.argv[1]
+
+config_data = yaml.safe_load(open(configfile).read())
+
+OFFSET = config_data['player_config'].get('silence_offset', OFFSET)
+VOLUME = config_data['player_config'].get('volume', VOLUME)
+SOUND_DEVICE = config_data['player_config'].get('sound_dev', SOUND_DEVICE)
+
+PTT_VID = config_data['player_config'].get('ptt_dev_vid', PTT_VID)
+PTT_PID = config_data['player_config'].get('ptt_dev_pid', PTT_PID)
 #silencesfile = 'silences.yml'
-silencesfile = sys.argv[1]
+silencesfile = config_data['player_config'].get('datafile', 'silences.yml')
+
 silence_data = yaml.safe_load(open(silencesfile).read())
 
 soundfile = silence_data[0]['name']
@@ -24,10 +37,8 @@ silences = silence_data[0]['silences']
 mixer.pre_init(devicename=SOUND_DEVICE)
 pygame.init()
 
-
 #my_font = pygame.font.SysFont('Comic Sans MS', 24)
 my_font = pygame.font.SysFont('Courier New', 24)
-
 
 width, height = 800, 600
 screen = pygame.display.set_mode((width, height))
@@ -53,7 +64,6 @@ start_tick = 0
 #vendor_id : 3468
 
 #usb_dev: tuple = (0x0D8C, 0x013A)
-usb_dev: tuple = (3468, 316)
 
 READ_SIZE = 5
 
@@ -65,7 +75,7 @@ COR_STOP = bytearray(b'\x00\x00\x00\x00')
 
 h = None
 try:
-  h = hid.Device(usb_dev[0], usb_dev[1])
+  h = hid.Device(PTT_VID, PTT_PID)
   print(f'Device manufacturer: {h.manufacturer}')
   print(f'Product: {h.product}')
   print(f'Serial Number: {h.serial}')
@@ -149,8 +159,13 @@ for file_block in silence_data:
       #curr_start = (silences[sidx]['start'] + OFFSET + 0.5 * silences[sidx]['duration']) * 1000 + sound_delta
       #curr_duration_s = max(MIN_PAUSE, min(silences[sidx]['duration'], MAX_PAUSE))
       #curr_duration = curr_duration_s * 1000
+
+      curr_silence = silences[sidx]
+
+      sil_start = curr_silence['start']
+      sil_dur = curr_silence['duration'] if curr_silence['duration'] != float('inf') else 1.0
       
-      curr_start = (silences[sidx]['start'] + OFFSET + 0.5 * silences[sidx]['duration']) * 1000
+      curr_start = (sil_start + OFFSET + 0.5 * sil_dur) * 1000
       curr_duration = MIN_PAUSE * 1000
   
       dt_start = timedelta(seconds=curr_start / 1000)
