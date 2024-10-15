@@ -69,13 +69,13 @@ def ptt_start(state):
     PTT_START = b'\x00\x00\x04\x04\x00'
     state.is_ptt_on = True
     if state.ptt_dev is not None:
-        stat.ptt_dev.write(PTT_START)
+        state.ptt_dev.write(PTT_START)
 
 def ptt_stop(state):
     PTT_STOP = b'\x00\x00\x00\x00\x00'
     state.is_ptt_on = False
     if state.ptt_dev is not None:
-        stat.ptt_dev.write(PTT_STOP)
+        state.ptt_dev.write(PTT_STOP)
 
 class PlayerState(Enum):
   STARTING = 0
