@@ -6,8 +6,8 @@ player_config:
     #sound_dev: 'Bose QC35 II'
   sound_dev: null
     #sound_dev: 'USB PnP Sound Device'
-  #ptt_method: 'cm108'
-  ptt_method: 'fldigi'
+  ptt_method: 'cm108'
+    #ptt_method: 'fldigi'
   ptt_dev_vid: 3468
   ptt_dev_pid: 316
   fldigi_host: '127.0.0.1'
@@ -15,6 +15,8 @@ player_config:
   ptt_on_delay: 0.1
   ptt_off_delay: 0.25
   play_time:
+    - day: Tuesday
+      time: '17:26'
     - day: Sunday
       time: '09:30'
     - day: Wednesday

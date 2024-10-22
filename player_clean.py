@@ -13,6 +13,8 @@ FLDIGI_PORT = 7362
 PTT_ON_DELAY = 0.1
 PTT_OFF_DELAY = 0.25
 
+PLAY_TIME = None
+
 STARTUP_DELAY = 3.0
 
 from enum import Enum
@@ -21,7 +23,8 @@ import pygame
 from pygame import mixer, time, font
 from pygame.locals import *
 import yaml
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, time as dt_time
+import calendar
 import sys
 
 configfile = sys.argv[1]
@@ -43,6 +46,8 @@ FLDIGI_PORT = config_data['player_config'].get('fldigi_port', FLDIGI_PORT)
 if not silencesfile:
   silencesfile = config_data['player_config'].get('datafile', 'silences.yml')
 
+PLAY_TIME = config_data['player_config'].get('play_time', PLAY_TIME)
+
 silence_data = yaml.safe_load(open(silencesfile).read())
 
 ## UTIL functions
@@ -60,6 +65,17 @@ def ticks_format(ticks):
 def secs_format(sec):
     td = timedelta(seconds=sec)
     return(str(td))
+
+DAY_INDEXES = { name: num for num, name in enumerate(calendar.day_name)}
+
+def find_next_weekday(day_str):
+    today = date.today()
+    day_index = DAY_INDEXES[day_str]
+    day_gap = day_index - today.weekday()
+    if day_gap < 0:
+        day_gap += 7
+    next_day_date = today + timedelta(days=day_gap)
+    return next_day_date
 
 def init_cm108_ptt(vid, pid, state):
     h = None
@@ -81,10 +97,10 @@ def init_fldigi_ptt(host, port, state):
       print(f'fldigi version: {str(client.version)}')
       client.modem.name = 'NULL'
       print(f'fldigi modem: {client.modem.name}')
+      state.ptt_fldigiclient = client
     except Exception as e:
-      print(e)
+      #print(e)
       print('No pyfldigi connection')
-    state.ptt_fldigiclient = client
 
 def ptt_start(state):
     PTT_START = b'\x00\x00\x04\x04\x00'
@@ -101,6 +117,8 @@ def ptt_stop(state):
         state.ptt_dev.write(PTT_STOP)
     if state.ptt_fldigiclient is not None:
         state.ptt_fldigiclient.main.rx()
+
+## State storage
 
 class PlayerState(Enum):
   STARTING = 0
@@ -121,6 +139,7 @@ class StartingState:
     preinit_done: bool = None
     init_done: bool = None
     start_tick: int = None
+    start_play_at: datetime = None
 
 @dataclass
 class PlayingState:
@@ -135,6 +154,8 @@ class StateContainer:
     p: PlayingState = field(default_factory=PlayingState)
     current: PlayerState = PlayerState.STARTING
 
+## state init
+
 state = StateContainer()
 
 MUSIC_END = pygame.USEREVENT+1
@@ -145,6 +166,36 @@ state.s.preinit_done = False
 if SOUND_DEVICE is not None:
     mixer.pre_init(devicename=SOUND_DEVICE)
 pygame.init()
+
+## pre-check
+
+if PLAY_TIME:
+
+  now = datetime.now()
+
+  for playtime in PLAY_TIME:
+    print(f'checking playtime {playtime}')
+    pday = playtime['day']
+    ptime = playtime['time']
+
+    next_pday_date = find_next_weekday(pday)
+    print(next_pday_date)
+
+    next_play_dt = datetime.combine(next_pday_date, dt_time.fromisoformat(ptime))
+
+    next_play_in = next_play_dt - now
+
+    print(next_play_in)
+
+    if next_play_in.total_seconds() > 0 and next_play_in < timedelta(hours=2.5):
+        print(f'set start_play_at: {next_play_dt}')
+        state.s.start_play_at = next_play_dt
+        break
+  if state.s.start_play_at is None:
+      print('play time configured but not in time window, exiting')
+      sys.exit(0)
+
+## game loop
 
 while True:
     text = []
@@ -165,8 +216,8 @@ while True:
             state.g.font = my_font
 
             if PTT_METHOD == 'cm108':
-                init_cmd108_ptt(PTT_VID, PTT_PID, state.g)
-                print(str(state.g.ptt_dev))
+                init_cm108_ptt(PTT_VID, PTT_PID, state.g)
+                print(f'PTT dev: {state.g.ptt_dev}')
             elif PTT_METHOD == 'fldigi':
                 init_fldigi_ptt(FLDIGI_HOST, FLDIGI_PORT, state.g)
 
@@ -176,7 +227,13 @@ while True:
             state.s.start_tick = ticks
             state.s.init_done = True
 
-        if ticks > state.s.start_tick + STARTUP_DELAY * 1000.0:
+        can_start = True
+        if state.s.start_play_at:
+            remaining = state.s.start_play_at - datetime.now()
+            if remaining.total_seconds() > 0:
+                can_start = False
+
+        if can_start and ticks > state.s.start_tick + STARTUP_DELAY * 1000.0:
             state.current = PlayerState.PLAYING
             state.p.load_done = False
 
@@ -263,7 +320,18 @@ while True:
     text.append(f'Init state: {"done" if state.s.init_done else "pending"}')
 
     if state.current == PlayerState.STARTING:
-        text.append("Waiting to play next file...")
+        remaining = None
+        if state.s.start_play_at:
+            remaining = state.s.start_play_at - datetime.now()
+            if remaining.total_seconds() < 0:
+                remaining = None
+
+        if remaining is not None:
+          text.append(f"Waiting until {state.s.start_play_at} to play next file")
+          text.append(f"({remaining} remaining)")
+        else:
+          text.append("Waiting to play next file...")
+          text.append("")
     elif state.current == PlayerState.PLAYING:
         soundfile_idx = state.g.soundfile_idx
         playstate = 'Playing' if state.p.pause_start_tick is None else 'Paused'
