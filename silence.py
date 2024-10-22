@@ -1,19 +1,106 @@
 from functools import total_ordering
-from datetime import timedelta as TD
+from datetime import timedelta as TD, datetime, date
+import calendar
 import yaml
 import sys
+import subprocess
+import requests
+import os.path
 
-mp3filename = sys.argv[1]
+template_pre = [
+        {
+            'name': 'sample_files/welcome.mp3',
+            'silences': []
+            }
+        ]
 
-MAX_DIST = 60.0*3 - 5
-WANT_DIST = 60.0*2
+template_post = [
+        {
+            'name': 'sample_files/thankyou.mp3',
+            'silences': []
+            }
+        ]
+
+DAY_INDEXES = { name: num for num, name in enumerate(calendar.day_name)}
+
+MAX_DIST = 2.5
+WANT_DIST = 2
 #MAX_DIST = 60.0*1 - 5
 #WANT_DIST = 0
 WANT_DURATIONS = [2.0, 1.5, 1.0, 0.5, 0.3]
 
+DOWNLOAD_BASE = 'https://www.wia-files.com/podcast/wianews-{date}.mp3'
+DOWNLOAD_DAY = 'Sunday'
 
-silence_half_text = open('silences.txt').readlines()
-#silence_one_text = open('silence_half_sec.txt').readlines()
+if len(sys.argv) > 1:
+  configfile = sys.argv[1]
+  config_data = yaml.safe_load(open(configfile).read())
+  silence_config = config_data.get('silences',{})
+  MAX_DIST = silence_config.get('max_dist', MAX_DIST)
+  WANT_DIST = silence_config.get('want_dist', WANT_DIST)
+  WANT_DURATIONS = silence_config.get('want_durations', WANT_DURATIONS)
+  DOWNLOAD_BASE = silence_config.get('download', {}).get('base_url', DOWNLOAD_BASE)
+  DOWNLOAD_DAY = silence_config.get('download', {}).get('dat', DOWNLOAD_DAY)
+
+MAX_DIST = MAX_DIST * 60.0
+WANT_DIST = WANT_DIST * 60.0
+
+is_latest = False
+mp3filename = None
+if len(sys.argv) > 2:
+  mp3filename = sys.argv[2]
+else:
+  is_latest = True
+  today = date.today()
+  dl_day_index = DAY_INDEXES[DOWNLOAD_DAY]
+  day_gap = dl_day_index - today.weekday()
+  if day_gap > 0:
+      day_gap -= 7
+  download_date = today + TD(days=day_gap)
+  download_date_str = download_date.strftime('%Y-%m-%d')
+  download_url = DOWNLOAD_BASE.format(date=download_date_str)
+  mp3filename = download_url.split("/")[-1]
+
+  if os.path.isfile(mp3filename):
+      print(f'File exists: {mp3filename}')
+  else:
+
+    print(f'download url: {download_url}')
+
+    r_headers = {
+            'User-Agent': 'VK3UKW Download 0.1',
+            }
+
+    r = requests.get(download_url, headers=r_headers, allow_redirects=True)
+    r.raise_for_status()
+    open(mp3filename, 'wb').write(r.content)
+
+silencename = f'{mp3filename}_silences.txt'
+outputname = f'{mp3filename}_cbr.mp3'
+
+silence_cmd = f'ffmpeg -y -i {mp3filename} -af silencedetect=noise=-35dB:d=0.3,ametadata=mode=print:file={silencename},dynaudnorm=p=0.9 -b:a 256k {outputname}'
+
+print(f'Running {silence_cmd}')
+subprocess.run(silence_cmd.split(' '))
+
+length_cmd = f'ffprobe -i {outputname} -show_entries format=duration -v quiet -of csv=p=0'
+print(f'Running {length_cmd}')
+length_result = subprocess.run(length_cmd.split(' '), capture_output=True)
+
+length_out = length_result.stdout.decode().strip()
+
+print(f'length_out: {length_out}')
+
+length_out_min = float(length_out) / 60.0
+
+print(f'length_out mins: {length_out_min}')
+
+if length_out_min < 28.0:
+    print('Less than 28 minutes!')
+    sys.exit(1)
+
+
+silence_text = open(silencename).readlines()
 
 def format_sec(seconds):
   if not seconds or seconds == float('inf'):
@@ -47,7 +134,7 @@ duration = None
 
 silences = []
 
-for line in silence_half_text:
+for line in silence_text:
   if line.startswith('lavfi.silence'):
     components = line.strip().split('=')
     if components[0] == 'lavfi.silence_start':
@@ -116,5 +203,11 @@ selected_list = [ {'start': s.start, 'end': s.end, 'duration': s.duration} for s
 
 wrapped_list = [ { 'name': mp3filename, 'silences': selected_list } ]
 
-with open('silences.yml', 'w') as yf:
+with open(f'silences_{mp3filename}.yml', 'w') as yf:
   yaml.dump(wrapped_list, yf)
+
+if is_latest:
+    templated = template_pre + wrapped_list + template_post
+
+    with open(f'silences_latest.yml', 'w') as yf:
+      yaml.dump(templated, yf)

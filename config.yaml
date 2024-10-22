@@ -3,10 +3,26 @@ player_config:
   silence_offset: 0.0
   volume: 1.0
   datafile: 'silences.yml'
-#  sound_dev: 'Bose QC35 II'
+    #sound_dev: 'Bose QC35 II'
   sound_dev: null
+    #sound_dev: 'USB PnP Sound Device'
+  #ptt_method: 'cm108'
+  ptt_method: 'fldigi'
   ptt_dev_vid: 3468
   ptt_dev_pid: 316
+  fldigi_host: '127.0.0.1'
+  fldigi_port: 7362
   ptt_on_delay: 0.1
   ptt_off_delay: 0.25
-
+  play_time:
+    - day: Sunday
+      time: '09:30'
+    - day: Wednesday
+      time: '20:00'
+silences:
+  max_dist: 2.5
+  want_dist: 2.0
+  want_durations: [2.0, 1.5, 1.0, 0.5, 0.3]
+  download:
+    base_url: 'https://www.wia-files.com/podcast/wianews-{date}.mp3'
+    day: Sunday

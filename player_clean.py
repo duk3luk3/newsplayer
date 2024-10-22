@@ -5,8 +5,11 @@ PAUSE_LENGTH = 2.0
 VOLUME=1.0
 #SOUND_DEVICE='USB PnP Sound Device'
 SOUND_DEVICE='Bose QC35 II'
+PTT_METHOD='cm108'
 PTT_VID = 3568
 PTT_PID = 316
+FLDIGI_HOST = '127.0.0.1'
+FLDIGI_PORT = 7362
 PTT_ON_DELAY = 0.1
 PTT_OFF_DELAY = 0.25
 
@@ -20,9 +23,9 @@ from pygame.locals import *
 import yaml
 from datetime import datetime, timedelta
 import sys
-import hid
 
 configfile = sys.argv[1]
+silencesfile = sys.argv[2] if len(sys.argv) > 2 else None
 
 config_data = yaml.safe_load(open(configfile).read())
 
@@ -31,10 +34,14 @@ VOLUME = config_data['player_config'].get('volume', VOLUME)
 SOUND_DEVICE = config_data['player_config'].get('sound_dev', SOUND_DEVICE)
 PAUSE_LENGTH = config_data['player_config'].get('pause_length', PAUSE_LENGTH)
 
+PTT_METHOD = config_data['player_config'].get('ptt_method', PTT_METHOD)
 PTT_VID = config_data['player_config'].get('ptt_dev_vid', PTT_VID)
 PTT_PID = config_data['player_config'].get('ptt_dev_pid', PTT_PID)
+FLDIGI_HOST = config_data['player_config'].get('fldigi_host', FLDIGI_HOST)
+FLDIGI_PORT = config_data['player_config'].get('fldigi_port', FLDIGI_PORT)
 #silencesfile = 'silences.yml'
-silencesfile = config_data['player_config'].get('datafile', 'silences.yml')
+if not silencesfile:
+  silencesfile = config_data['player_config'].get('datafile', 'silences.yml')
 
 silence_data = yaml.safe_load(open(silencesfile).read())
 
@@ -54,9 +61,10 @@ def secs_format(sec):
     td = timedelta(seconds=sec)
     return(str(td))
 
-def init_ptt(vid, pid, state):
+def init_cm108_ptt(vid, pid, state):
     h = None
     try:
+      import hid
       h = hid.Device(vid, pid)
       print(f'Device manufacturer: {h.manufacturer}')
       print(f'Product: {h.product}')
@@ -65,17 +73,34 @@ def init_ptt(vid, pid, state):
       print('No PTT device!')
     state.ptt_dev = h
 
+def init_fldigi_ptt(host, port, state):
+    client = None
+    try:
+      import pyfldigi
+      client = pyfldigi.Client(hostname=host, port=port)
+      print(f'fldigi version: {str(client.version)}')
+      client.modem.name = 'NULL'
+      print(f'fldigi modem: {client.modem.name}')
+    except Exception as e:
+      print(e)
+      print('No pyfldigi connection')
+    state.ptt_fldigiclient = client
+
 def ptt_start(state):
     PTT_START = b'\x00\x00\x04\x04\x00'
     state.is_ptt_on = True
     if state.ptt_dev is not None:
         state.ptt_dev.write(PTT_START)
+    if state.ptt_fldigiclient is not None:
+        state.ptt_fldigiclient.main.tx()
 
 def ptt_stop(state):
     PTT_STOP = b'\x00\x00\x00\x00\x00'
     state.is_ptt_on = False
     if state.ptt_dev is not None:
         state.ptt_dev.write(PTT_STOP)
+    if state.ptt_fldigiclient is not None:
+        state.ptt_fldigiclient.main.rx()
 
 class PlayerState(Enum):
   STARTING = 0
@@ -88,6 +113,8 @@ class GlobalState:
     soundfile_idx: int = None
     screen = None
     is_ptt_on = None
+    ptt_dev = None
+    ptt_fldigiclient = None
 
 @dataclass
 class StartingState:
@@ -137,7 +164,11 @@ while True:
             my_font = pygame.font.SysFont('Courier New', 24)
             state.g.font = my_font
 
-            init_ptt(PTT_VID, PTT_PID, state.g)
+            if PTT_METHOD == 'cm108':
+                init_cmd108_ptt(PTT_VID, PTT_PID, state.g)
+                print(str(state.g.ptt_dev))
+            elif PTT_METHOD == 'fldigi':
+                init_fldigi_ptt(FLDIGI_HOST, FLDIGI_PORT, state.g)
 
             state.s.preinit_done = True
 
@@ -205,13 +236,24 @@ while True:
     for event in pygame.event.get():
       if event.type == QUIT:
         #ptt_stop()
+        if state.g.is_ptt_on:
+            time.delay(int(PTT_OFF_DELAY * 1000))
+            ptt_stop(state.g)
         pygame.quit()
         sys.exit()
       elif event.type == MUSIC_END:
-        state.current = PlayerState.STARTING
-        state.s.init_done = False
+        time.delay(int(PTT_OFF_DELAY * 1000))
+        ptt_stop(state.g)
+        print('Music end')
+        if state.g.soundfile_idx >= len(silence_data) - 1:
+            state.current = PlayerState.FINISHED
+        else:
+            state.current = PlayerState.STARTING
+            state.s.init_done = False
 
 
+    if state.current == PlayerState.FINISHED:
+        break
 
 
     screen = state.g.screen
