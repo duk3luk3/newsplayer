@@ -9,8 +9,13 @@ import os.path
 
 template_pre = [
         {
-            'name': 'sample_files/welcome.mp3',
+            'name': 'sample_files/warning.mp3',
             'silences': []
+            },
+        {
+            'name': 'sample_files/welcome.mp3',
+            'silences': [],
+            'pause_before': 270
             }
         ]
 

@@ -2,7 +2,7 @@ player_config:
   pause_length: 2.0
   silence_offset: 0.0
   volume: 1.0
-  datafile: 'silences.yml'
+  datafile: 'silences_latest.yml'
     #sound_dev: 'Bose QC35 II'
   sound_dev: null
     #sound_dev: 'USB PnP Sound Device'
@@ -15,8 +15,8 @@ player_config:
   ptt_on_delay: 0.1
   ptt_off_delay: 0.25
   play_time:
-    - day: Tuesday
-      time: '17:26'
+    - day: Wednesday
+      time: '16:19'
     - day: Sunday
       time: '09:30'
     - day: Wednesday

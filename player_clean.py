@@ -121,8 +121,9 @@ def ptt_stop(state):
 ## State storage
 
 class PlayerState(Enum):
-  STARTING = 0
-  PLAYING = 1
+  WAITING = 0
+  STARTING = 1
+  PLAYING = 2
   FINISHED = 3
   GLOBAL = 999
 
@@ -135,11 +136,16 @@ class GlobalState:
     ptt_fldigiclient = None
 
 @dataclass
-class StartingState:
+class WaitingState:
     preinit_done: bool = None
     init_done: bool = None
-    start_tick: int = None
     start_play_at: datetime = None
+    wait_start_tick: datetime = None
+    start_tick: int = None
+
+@dataclass
+class StartingState:
+    init_done: bool = None
 
 @dataclass
 class PlayingState:
@@ -150,9 +156,10 @@ class PlayingState:
 @dataclass
 class StateContainer:
     g: GlobalState = field(default_factory=GlobalState)
+    w: WaitingState = field(default_factory=WaitingState)
     s: StartingState = field(default_factory=StartingState)
     p: PlayingState = field(default_factory=PlayingState)
-    current: PlayerState = PlayerState.STARTING
+    current: PlayerState = PlayerState.WAITING
 
 ## state init
 
@@ -160,8 +167,9 @@ state = StateContainer()
 
 MUSIC_END = pygame.USEREVENT+1
 
+state.w.preinit_done = False
+state.w.init_done = False
 state.s.init_done = False
-state.s.preinit_done = False
 
 if SOUND_DEVICE is not None:
     mixer.pre_init(devicename=SOUND_DEVICE)
@@ -189,9 +197,9 @@ if PLAY_TIME:
 
     if next_play_in.total_seconds() > 0 and next_play_in < timedelta(hours=2.5):
         print(f'set start_play_at: {next_play_dt}')
-        state.s.start_play_at = next_play_dt
+        state.w.start_play_at = next_play_dt
         break
-  if state.s.start_play_at is None:
+  if state.w.start_play_at is None:
       print('play time configured but not in time window, exiting')
       sys.exit(0)
 
@@ -204,8 +212,8 @@ while True:
     text.append(f"State: {state.current.name}")
 
     # Main state machine
-    if state.current == PlayerState.STARTING:
-        if not state.s.preinit_done:
+    if state.current == PlayerState.WAITING:
+        if not state.w.preinit_done:
             width, height = 800, 600
             screen = pygame.display.set_mode((width, height))
             state.g.screen = screen
@@ -221,17 +229,48 @@ while True:
             elif PTT_METHOD == 'fldigi':
                 init_fldigi_ptt(FLDIGI_HOST, FLDIGI_PORT, state.g)
 
-            state.s.preinit_done = True
+            state.w.start_tick = ticks
+
+
+            state.w.preinit_done = True
+
+        if not state.w.init_done:
+            state.g.soundfile_idx = (state.g.soundfile_idx if state.g.soundfile_idx is not None else -1) + 1
+
+            state.w.init_done = True
+
+        soundfile_idx = state.g.soundfile_idx
+
+        can_start = True
+        if state.w.start_play_at and state.g.soundfile_idx == 0:
+            remaining = state.w.start_play_at - datetime.now()
+            if remaining.total_seconds() > 0:
+                can_start = False
+
+        if state.g.soundfile_idx is not None and state.g.soundfile_idx >= 0 and state.g.soundfile_idx < len(silence_data):
+            silence = silence_data[state.g.soundfile_idx]
+            if 'pause_before' in silence:
+                if state.w.wait_start_tick is None:
+                    print("We have a pause to check")
+                    state.w.wait_start_tick = ticks
+
+                waited = ticks - state.w.wait_start_tick
+
+                if ticks_to_sec(waited) < silence['pause_before']:
+                    can_start = False
+                else:
+                    print('Pause done')
+                    state.w.wait_start_tick = None
+
+        if can_start:
+            state.current = PlayerState.STARTING
+    if state.current == PlayerState.STARTING:
 
         if not state.s.init_done:
             state.s.start_tick = ticks
             state.s.init_done = True
 
         can_start = True
-        if state.s.start_play_at:
-            remaining = state.s.start_play_at - datetime.now()
-            if remaining.total_seconds() > 0:
-                can_start = False
 
         if can_start and ticks > state.s.start_tick + STARTUP_DELAY * 1000.0:
             state.current = PlayerState.PLAYING
@@ -239,8 +278,6 @@ while True:
 
     if state.current == PlayerState.PLAYING:
         if not state.p.load_done:
-            soundfile_idx = state.g.soundfile_idx if state.g.soundfile_idx is not None else -1
-            soundfile_idx = soundfile_idx + 1
             print(f"Starting sound file {soundfile_idx}")
             soundfile = silence_data[soundfile_idx]['name']
             mixer.music.load(soundfile)
@@ -305,8 +342,8 @@ while True:
         if state.g.soundfile_idx >= len(silence_data) - 1:
             state.current = PlayerState.FINISHED
         else:
-            state.current = PlayerState.STARTING
-            state.s.init_done = False
+            state.current = PlayerState.WAITING
+            state.w.init_done = False
 
 
     if state.current == PlayerState.FINISHED:
@@ -319,15 +356,17 @@ while True:
     text.append(f'ticks: {ticks:05} time elapsed: {ticks_format(ticks)} state: {state.current.name}')
     text.append(f'Init state: {"done" if state.s.init_done else "pending"}')
 
-    if state.current == PlayerState.STARTING:
+    if state.current == PlayerState.WAITING:
         remaining = None
-        if state.s.start_play_at:
-            remaining = state.s.start_play_at - datetime.now()
+        if state.w.start_play_at is not None:
+            remaining = state.w.start_play_at - datetime.now()
             if remaining.total_seconds() < 0:
                 remaining = None
+        if remaining is None and state.w.wait_start_tick is not None:
+            remaining = timedelta(milliseconds=(state.w.wait_start_tick - ticks)*-1)
 
         if remaining is not None:
-          text.append(f"Waiting until {state.s.start_play_at} to play next file")
+          text.append(f"Waiting until {state.w.start_play_at} to play next file")
           text.append(f"({remaining} remaining)")
         else:
           text.append("Waiting to play next file...")
