@@ -6,6 +6,7 @@ import sys
 import subprocess
 import requests
 import os.path
+import os
 
 template_pre = [
         {
@@ -59,14 +60,14 @@ else:
   today = date.today()
   dl_day_index = DAY_INDEXES[DOWNLOAD_DAY]
   day_gap = dl_day_index - today.weekday()
-  if day_gap > 0:
+  if day_gap > 2:
       day_gap -= 7
   download_date = today + TD(days=day_gap)
   download_date_str = download_date.strftime('%Y-%m-%d')
   download_url = DOWNLOAD_BASE.format(date=download_date_str)
   mp3filename = download_url.split("/")[-1]
 
-  if os.path.isfile(mp3filename):
+  if os.path.isfile(mp3filename) and os.path.getsize(mp3filename) > 10*1024*1024:
       print(f'File exists: {mp3filename}')
   else:
 
@@ -76,17 +77,25 @@ else:
             'User-Agent': 'VK3UKW Download 0.1',
             }
 
-    r = requests.get(download_url, headers=r_headers, allow_redirects=True)
+    print('Downloading...')
+    r = requests.get(download_url, headers=r_headers, allow_redirects=True, stream=True)
     r.raise_for_status()
-    open(mp3filename, 'wb').write(r.content)
+    bs = 1024**4
+    with open(mp3filename, 'wb') as mf:
+        for data in r.iter_content(bs):
+            sys.stdout.write('.')
+            sys.stdout.flush()
+            mf.write(data)
+    print(' done')
 
 silencename = f'{mp3filename}_silences.txt'
 outputname = f'{mp3filename}_cbr.mp3'
 
-silence_cmd = f'ffmpeg -y -i {mp3filename} -af silencedetect=noise=-35dB:d=0.3,ametadata=mode=print:file={silencename},dynaudnorm=p=0.9 -b:a 256k {outputname}'
+if not os.path.isfile(outputname) or os.path.getsize(outputname) < 1000*1000:
+    silence_cmd = f'ffmpeg -y -i {mp3filename} -af silencedetect=noise=-35dB:d=0.3,ametadata=mode=print:file={silencename},dynaudnorm=p=0.9 -b:a 256k {outputname}'
 
-print(f'Running {silence_cmd}')
-subprocess.run(silence_cmd.split(' '))
+    print(f'Running {silence_cmd}')
+    subprocess.run(silence_cmd.split(' '))
 
 length_cmd = f'ffprobe -i {outputname} -show_entries format=duration -v quiet -of csv=p=0'
 print(f'Running {length_cmd}')
@@ -102,6 +111,7 @@ print(f'length_out mins: {length_out_min}')
 
 if length_out_min < 28.0:
     print('Less than 28 minutes!')
+    os.remove(mp3filename)
     sys.exit(1)
 
 

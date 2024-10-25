@@ -102,6 +102,21 @@ def init_fldigi_ptt(host, port, state):
       #print(e)
       print('No pyfldigi connection')
 
+def init_civ_ptt(trans, ctrl, port, state):
+    import ICOM
+    comm = ICOM.Comm(None)
+    icom = ICOM.ICOM(None, comm)
+    comm.port = port
+    comm.baudrate=19200
+    icom.transAddr = trans
+    icom.controlAddr = ctrl
+    state.ptt_icom = icom
+    state.ptt_icom.cp.open()
+    poweron_message = (icom.preamble,)*150 + (icom.transAddr, icom.controlAddr, 0x18, 0x01, icom.endOfMess)
+    icom.cp.sendMessage(poweron_message)
+    time.delay(int(5 * 1000))
+
+
 def ptt_start(state):
     PTT_START = b'\x00\x00\x04\x04\x00'
     state.is_ptt_on = True
@@ -109,6 +124,14 @@ def ptt_start(state):
         state.ptt_dev.write(PTT_START)
     if state.ptt_fldigiclient is not None:
         state.ptt_fldigiclient.main.tx()
+    if state.ptt_icom is not None:
+        print('start icom')
+        if not state.ptt_icom.cp.isOpen:
+            state.ptt_icom.cp.open()
+        print(f'icom open: {state.ptt_icom.cp.isOpen}')
+        state.ptt_icom.sendMessage((0x1c,0x00,0x01))
+        state.ptt_icom.cp.close()
+
 
 def ptt_stop(state):
     PTT_STOP = b'\x00\x00\x00\x00\x00'
@@ -117,6 +140,11 @@ def ptt_stop(state):
         state.ptt_dev.write(PTT_STOP)
     if state.ptt_fldigiclient is not None:
         state.ptt_fldigiclient.main.rx()
+    if state.ptt_icom is not None:
+        if not state.ptt_icom.cp.isOpen:
+            state.ptt_icom.cp.open()
+        state.ptt_icom.sendMessage((0x1c,0x00,0x00))
+        state.ptt_icom.cp.close()
 
 ## State storage
 
@@ -131,9 +159,11 @@ class PlayerState(Enum):
 class GlobalState:
     soundfile_idx: int = None
     screen = None
+    display_driver = None
     is_ptt_on = None
     ptt_dev = None
     ptt_fldigiclient = None
+    ptt_icom = None
 
 @dataclass
 class WaitingState:
@@ -203,196 +233,219 @@ if PLAY_TIME:
       print('play time configured but not in time window, exiting')
       sys.exit(0)
 
+# PTT init
+
+if PTT_METHOD == 'cm108':
+    init_cm108_ptt(PTT_VID, PTT_PID, state.g)
+    print(f'PTT dev: {state.g.ptt_dev}')
+elif PTT_METHOD == 'fldigi':
+    init_fldigi_ptt(FLDIGI_HOST, FLDIGI_PORT, state.g)
+elif PTT_METHOD == 'civ':
+    civ_data = config_data['player_config']['ptt_civ']
+    init_civ_ptt(civ_data['trans_id'],civ_data['ctrl_id'], civ_data['port'], state.g)
+
 ## game loop
 
 while True:
-    text = []
-    ticks = time.get_ticks()
+    try:
+        text = []
+        ticks = time.get_ticks()
 
-    text.append(f"State: {state.current.name}")
+        text.append(f"State: {state.current.name}")
 
-    # Main state machine
-    if state.current == PlayerState.WAITING:
-        if not state.w.preinit_done:
-            width, height = 800, 600
-            screen = pygame.display.set_mode((width, height))
-            state.g.screen = screen
-            fpsClock = time.Clock()
-            state.g.fpsclock = fpsClock
+        # Main state machine
+        if state.current == PlayerState.WAITING:
+            if not state.w.preinit_done:
+                size = (pygame.display.Info().current_w, pygame.display.Info().current_h)
+                width, height = size
+                info = pygame.display.Info()
+                import pprint
+                pprint.pprint(info)
+                driver = pygame.display.get_driver()
+                state.g.display_driver = driver
+                print(f'SDL driver: {driver}')
 
-            my_font = pygame.font.SysFont('Courier New', 24)
-            state.g.font = my_font
+                screen = pygame.display.set_mode((width, height/2))
+                state.g.screen = screen
+                fpsClock = time.Clock()
+                state.g.fpsclock = fpsClock
 
-            if PTT_METHOD == 'cm108':
-                init_cm108_ptt(PTT_VID, PTT_PID, state.g)
-                print(f'PTT dev: {state.g.ptt_dev}')
-            elif PTT_METHOD == 'fldigi':
-                init_fldigi_ptt(FLDIGI_HOST, FLDIGI_PORT, state.g)
-
-            state.w.start_tick = ticks
+                my_font = pygame.font.SysFont('Courier New', 24)
+                state.g.font = my_font
 
 
-            state.w.preinit_done = True
+                state.w.start_tick = ticks
 
-        if not state.w.init_done:
-            state.g.soundfile_idx = (state.g.soundfile_idx if state.g.soundfile_idx is not None else -1) + 1
 
-            state.w.init_done = True
+                state.w.preinit_done = True
 
-        soundfile_idx = state.g.soundfile_idx
+            if not state.w.init_done:
+                state.g.soundfile_idx = (state.g.soundfile_idx if state.g.soundfile_idx is not None else -1) + 1
 
-        can_start = True
-        if state.w.start_play_at and state.g.soundfile_idx == 0:
-            remaining = state.w.start_play_at - datetime.now()
-            if remaining.total_seconds() > 0:
-                can_start = False
+                state.w.init_done = True
 
-        if state.g.soundfile_idx is not None and state.g.soundfile_idx >= 0 and state.g.soundfile_idx < len(silence_data):
-            silence = silence_data[state.g.soundfile_idx]
-            if 'pause_before' in silence:
+            soundfile_idx = state.g.soundfile_idx
+
+            can_start = True
+            if state.w.start_play_at and state.g.soundfile_idx == 0:
+                remaining = state.w.start_play_at - datetime.now()
+                if remaining.total_seconds() > 0:
+                    can_start = False
+
+            if state.g.soundfile_idx is not None and state.g.soundfile_idx >= 0 and state.g.soundfile_idx < len(silence_data):
+                silence = silence_data[state.g.soundfile_idx]
+                pause_before = silence.get('pause_before', 3)
                 if state.w.wait_start_tick is None:
                     print("We have a pause to check")
                     state.w.wait_start_tick = ticks
 
                 waited = ticks - state.w.wait_start_tick
 
-                if ticks_to_sec(waited) < silence['pause_before']:
+                if ticks_to_sec(waited) < pause_before:
                     can_start = False
                 else:
                     print('Pause done')
                     state.w.wait_start_tick = None
 
-        if can_start:
-            state.current = PlayerState.STARTING
-    if state.current == PlayerState.STARTING:
+            if can_start:
+                state.current = PlayerState.STARTING
+        if state.current == PlayerState.STARTING:
 
-        if not state.s.init_done:
-            state.s.start_tick = ticks
-            state.s.init_done = True
+            if not state.s.init_done:
+                state.s.start_tick = ticks
+                state.s.init_done = True
 
-        can_start = True
+            can_start = True
 
-        if can_start and ticks > state.s.start_tick + STARTUP_DELAY * 1000.0:
-            state.current = PlayerState.PLAYING
-            state.p.load_done = False
+            if can_start and ticks > state.s.start_tick + STARTUP_DELAY * 1000.0:
+                state.current = PlayerState.PLAYING
+                state.p.load_done = False
 
-    if state.current == PlayerState.PLAYING:
-        if not state.p.load_done:
-            print(f"Starting sound file {soundfile_idx}")
-            soundfile = silence_data[soundfile_idx]['name']
-            mixer.music.load(soundfile)
-            mixer.music.set_endevent(MUSIC_END)
-            mixer.music.set_volume(VOLUME)
-            ptt_start(state.g)
-            time.delay(int(PTT_OFF_DELAY * 1000))
-            mixer.music.play()
-
-            state.g.soundfile_idx = soundfile_idx
-            state.p.silence_idx = 0 if len(silence_data[soundfile_idx]['silences']) > 0 else None
-            state.p.pause_start_tick = None
-            state.p.load_done = True
-
-        soundfile_idx = state.g.soundfile_idx
-        silence_idx = state.p.silence_idx
-        silence = None
-        silence_start_s = None
-        if silence_idx is not None and silence_idx < len(silence_data[soundfile_idx]['silences']):
-            silence = silence_data[soundfile_idx]['silences'][silence_idx]
-            sil_dur = silence['duration'] if silence['duration'] != float('inf') else 1.0
-            silence_start_s = (silence['start'] + OFFSET + 0.5 * sil_dur)
-
-        if state.p.pause_start_tick is not None:
-            pause_start_tick = state.p.pause_start_tick
-
-            if ticks > pause_start_tick + PAUSE_LENGTH * 1000:
-                print("Resuming")
-                mixer.music.rewind()
-                mixer.music.set_pos(silence_start_s)
+        if state.current == PlayerState.PLAYING:
+            if not state.p.load_done:
+                print(f"Starting sound file {soundfile_idx}")
+                soundfile = silence_data[soundfile_idx]['name']
+                mixer.music.load(soundfile)
+                mixer.music.set_endevent(MUSIC_END)
+                mixer.music.set_volume(VOLUME)
                 ptt_start(state.g)
-                time.delay(int(PTT_ON_DELAY * 1000))
-                mixer.music.unpause()
-
-                state.p.silence_idx = state.p.silence_idx+1
-                state.p.pause_start_tick = None
-
-        elif silence is not None:
-            play_elapsed = mixer.music.get_pos()
-
-            if play_elapsed > silence_start_s * 1000:
-                print("Pausing")
-                mixer.music.pause()
                 time.delay(int(PTT_OFF_DELAY * 1000))
-                ptt_stop(state.g)
-                state.p.pause_start_tick = ticks
+                mixer.music.play()
+
+                state.g.soundfile_idx = soundfile_idx
+                state.p.silence_idx = 0 if len(silence_data[soundfile_idx]['silences']) > 0 else None
+                state.p.pause_start_tick = None
+                state.p.load_done = True
+
+            soundfile_idx = state.g.soundfile_idx
+            silence_idx = state.p.silence_idx
+            silence = None
+            silence_start_s = None
+            if silence_idx is not None and silence_idx < len(silence_data[soundfile_idx]['silences']):
+                silence = silence_data[soundfile_idx]['silences'][silence_idx]
+                sil_dur = silence['duration'] if silence['duration'] != float('inf') else 1.0
+                silence_start_s = (silence['start'] + OFFSET + 0.5 * sil_dur)
+
+            if state.p.pause_start_tick is not None:
+                pause_start_tick = state.p.pause_start_tick
+
+                if ticks > pause_start_tick + PAUSE_LENGTH * 1000:
+                    print("Resuming")
+                    mixer.music.rewind()
+                    mixer.music.set_pos(silence_start_s)
+                    ptt_start(state.g)
+                    time.delay(int(PTT_ON_DELAY * 1000))
+                    mixer.music.unpause()
+
+                    state.p.silence_idx = state.p.silence_idx+1
+                    state.p.pause_start_tick = None
+
+            elif silence is not None:
+                play_elapsed = mixer.music.get_pos()
+
+                if play_elapsed > silence_start_s * 1000:
+                    print("Pausing")
+                    mixer.music.pause()
+                    time.delay(int(PTT_OFF_DELAY * 1000))
+                    ptt_stop(state.g)
+                    state.p.pause_start_tick = ticks
 
 
-    # Process events
-    for event in pygame.event.get():
-      if event.type == QUIT:
-        #ptt_stop()
-        if state.g.is_ptt_on:
+        # Process events
+        for event in pygame.event.get():
+          if event.type == QUIT or event.type == KEYDOWN:
+              if not hasattr(event, 'Key') or event.key == pygame.K_ESCAPE or event.key == pygame.K_q:
+                #ptt_stop()
+                if state.g.is_ptt_on:
+                    time.delay(int(PTT_OFF_DELAY * 1000))
+                    ptt_stop(state.g)
+                pygame.quit()
+                sys.exit()
+          elif event.type == MUSIC_END:
             time.delay(int(PTT_OFF_DELAY * 1000))
             ptt_stop(state.g)
-        pygame.quit()
-        sys.exit()
-      elif event.type == MUSIC_END:
-        time.delay(int(PTT_OFF_DELAY * 1000))
-        ptt_stop(state.g)
-        print('Music end')
-        if state.g.soundfile_idx >= len(silence_data) - 1:
-            state.current = PlayerState.FINISHED
-        else:
-            state.current = PlayerState.WAITING
-            state.w.init_done = False
+            print('Music end')
+            if state.g.soundfile_idx >= len(silence_data) - 1:
+                state.current = PlayerState.FINISHED
+            else:
+                state.current = PlayerState.WAITING
+                state.w.init_done = False
 
 
-    if state.current == PlayerState.FINISHED:
-        break
+        if state.current == PlayerState.FINISHED:
+            break
 
 
-    screen = state.g.screen
-    screen.fill((0, 0, 0))
-    font = state.g.font
-    text.append(f'ticks: {ticks:05} time elapsed: {ticks_format(ticks)} state: {state.current.name}')
-    text.append(f'Init state: {"done" if state.s.init_done else "pending"}')
+        screen = state.g.screen
+        screen.fill((0, 0, 0))
+        font = state.g.font
+        text.append(f'ticks: {ticks:05} time elapsed: {ticks_format(ticks)} state: {state.current.name}')
+        text.append(f'Init state: {"done" if state.s.init_done else "pending"}')
 
-    if state.current == PlayerState.WAITING:
-        remaining = None
-        if state.w.start_play_at is not None:
-            remaining = state.w.start_play_at - datetime.now()
-            if remaining.total_seconds() < 0:
-                remaining = None
-        if remaining is None and state.w.wait_start_tick is not None:
-            remaining = timedelta(milliseconds=(state.w.wait_start_tick - ticks)*-1)
+        if state.current == PlayerState.WAITING:
+            remaining = None
+            if state.w.start_play_at is not None:
+                remaining = state.w.start_play_at - datetime.now()
+                if remaining.total_seconds() < 0:
+                    remaining = None
+            if remaining is None and state.w.wait_start_tick is not None:
+                remaining = timedelta(milliseconds=(state.w.wait_start_tick - ticks)*-1)
 
-        if remaining is not None:
-          text.append(f"Waiting until {state.w.start_play_at} to play next file")
-          text.append(f"({remaining} remaining)")
-        else:
-          text.append("Waiting to play next file...")
-          text.append("")
-    elif state.current == PlayerState.PLAYING:
-        soundfile_idx = state.g.soundfile_idx
-        playstate = 'Playing' if state.p.pause_start_tick is None else 'Paused'
-        pos_sec = ticks_format(mixer.music.get_pos())
-        text.append(f"{soundfile_idx:02} {playstate} at {pos_sec}")
-        silence_idx = state.p.silence_idx
-        if silence_idx is not None and silence_idx < len(silence_data[soundfile_idx]['silences']):
-            silence = silence_data[soundfile_idx]['silences'][silence_idx]
-            sil_dur = silence['duration'] if silence['duration'] != float('inf') else 1.0
-            silence_start_s = (silence['start'] + OFFSET + 0.5 * sil_dur)
-            silence_start_f = secs_format(silence_start_s)
-            text.append(f"Silence: {silence_idx:02} starting at {silence_start_f}")
-        else:
-            text.append(f"Silence: No more silence for this file")
+            if remaining is not None:
+              text.append(f"Waiting until {state.w.start_play_at} to play next file")
+              text.append(f"({remaining} remaining)")
+            else:
+              text.append("Waiting to play next file...")
+              text.append("")
+        elif state.current == PlayerState.PLAYING:
+            soundfile_idx = state.g.soundfile_idx
+            playstate = 'Playing' if state.p.pause_start_tick is None else 'Paused'
+            pos_sec = ticks_format(mixer.music.get_pos())
+            text.append(f"{soundfile_idx:02} {playstate} at {pos_sec}")
+            silence_idx = state.p.silence_idx
+            if silence_idx is not None and silence_idx < len(silence_data[soundfile_idx]['silences']):
+                silence = silence_data[soundfile_idx]['silences'][silence_idx]
+                sil_dur = silence['duration'] if silence['duration'] != float('inf') else 1.0
+                silence_start_s = (silence['start'] + OFFSET + 0.5 * sil_dur)
+                silence_start_f = secs_format(silence_start_s)
+                text.append(f"Silence: {silence_idx:02} starting at {silence_start_f}")
+            else:
+                text.append(f"Silence: No more silence for this file")
 
-    text.append(f"PTT: {'On' if state.g.is_ptt_on else 'Off'}")
+        text.append(f"PTT: {'On' if state.g.is_ptt_on else 'Off'}")
 
-    for idx, line in enumerate(text):
-      text_surface = my_font.render(line, False, (220, 0, 0))
-      screen.blit(text_surface, (0,idx * (my_font.size(line)[1] + 4)))
+        for idx, line in enumerate(text):
+          text_surface = my_font.render(line, False, (220, 0, 0))
+          screen.blit(text_surface, (0,idx * (my_font.size(line)[1] + 4)))
 
 
-    pygame.display.flip()
-    fpsClock.tick_busy_loop(300)
+        #if state.g.display_driver == 'KMSDRM':
+        #    screen.blit(pygame.transform.rotate(screen, 180), (0,0))
+        pygame.display.flip()
+        fpsClock.tick_busy_loop(300)
+    except:
+        if state.g.is_ptt_on:
+            ptt_stop(state.g)
+        sys.exit(1)
+
 

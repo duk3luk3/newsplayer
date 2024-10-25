@@ -1,9 +1,5 @@
 colorlog==6.8.2
-Cython==3.0.11
-ffmpeg-normalize==1.28.3
-ffmpeg-progress-yield==0.9.1
 hid==1.0.6
 mutagen==1.47.0
-pygame==2.6.1
 PyYAML==6.0.2
 tqdm==4.66.5

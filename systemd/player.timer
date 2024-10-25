@@ -1,0 +1,12 @@
+#/etc/systemd/system/foo.timer
+
+[Unit]
+Description=Run player daily
+
+[Timer]
+OnCalendar=*-*-* *:00:00
+OnBootSec=30seconds
+Persistent=true
+
+[Install]
+WantedBy=timers.target

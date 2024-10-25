@@ -1,0 +1,7 @@
+[Unit]
+Description=Start the player
+ 
+[Service]
+Type=simple
+WorkingDirectory=/home/luke/pygame/newsplayer
+ExecStart=/home/luke/pygame/newsplayer/run_player.sh
