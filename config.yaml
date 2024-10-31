@@ -1,5 +1,5 @@
 player_config:
-  pause_length: 2.0
+  pause_length: 2.3
   silence_offset: 0.0
   volume: 1.0
   datafile: 'silences_latest.yml'
@@ -21,9 +21,9 @@ player_config:
   ptt_off_delay: 0.25
   play_time:
     - day: Sunday
-      time: '09:30'
+      time: '09:25'
     - day: Wednesday
-      time: '20:00'
+      time: '19:55'
 silences:
   max_dist: 2.5
   want_dist: 2.0

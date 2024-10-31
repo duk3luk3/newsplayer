@@ -130,7 +130,6 @@ def ptt_start(state):
             state.ptt_icom.cp.open()
         print(f'icom open: {state.ptt_icom.cp.isOpen}')
         state.ptt_icom.sendMessage((0x1c,0x00,0x01))
-        state.ptt_icom.cp.close()
 
 
 def ptt_stop(state):
@@ -144,7 +143,6 @@ def ptt_stop(state):
         if not state.ptt_icom.cp.isOpen:
             state.ptt_icom.cp.open()
         state.ptt_icom.sendMessage((0x1c,0x00,0x00))
-        state.ptt_icom.cp.close()
 
 ## State storage
 
@@ -246,6 +244,8 @@ elif PTT_METHOD == 'civ':
 
 ## game loop
 
+sys.stdout.flush()
+
 while True:
     try:
         text = []
@@ -292,7 +292,7 @@ while True:
                 if remaining.total_seconds() > 0:
                     can_start = False
 
-            if state.g.soundfile_idx is not None and state.g.soundfile_idx >= 0 and state.g.soundfile_idx < len(silence_data):
+            if can_start and state.g.soundfile_idx is not None and state.g.soundfile_idx >= 0 and state.g.soundfile_idx < len(silence_data):
                 silence = silence_data[state.g.soundfile_idx]
                 pause_before = silence.get('pause_before', 3)
                 if state.w.wait_start_tick is None:
@@ -442,6 +442,7 @@ while True:
         #if state.g.display_driver == 'KMSDRM':
         #    screen.blit(pygame.transform.rotate(screen, 180), (0,0))
         pygame.display.flip()
+        sys.stdout.flush()
         fpsClock.tick_busy_loop(300)
     except:
         if state.g.is_ptt_on:
