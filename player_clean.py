@@ -104,8 +104,8 @@ def init_fldigi_ptt(host, port, state):
 
 def init_civ_ptt(trans, ctrl, port, state):
     import ICOM
-    comm = ICOM.Comm(None)
-    icom = ICOM.ICOM(None, comm)
+    comm = ICOM.Comm()
+    icom = ICOM.ICOM(comm)
     comm.port = port
     comm.baudrate=19200
     icom.transAddr = trans

@@ -1,10 +1,10 @@
 import ICOM
 import time
 
-commCAT = ICOM.Comm(None)
+commCAT = ICOM.Comm()
 commCAT.findPorts()
 commCAT.port = '/dev/ttyUSB0'
-icom = ICOM.ICOM(None, commCAT)
+icom = ICOM.ICOM(commCAT)
 icom.transAddr=0xA2
 icom.controlAddr=0xE0
 icom.cp.baudrate = 19200
